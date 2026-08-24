@@ -1,0 +1,4 @@
+{
+  "query": {"term": {"sku": "PRODUCT-0001"}},
+  "_source": ["id", "sku", "title", "price"]
+}

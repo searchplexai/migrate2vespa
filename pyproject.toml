@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "migrate2vespa"
+version = "0.1.0"
+description = "Workload-aware Elasticsearch/OpenSearch to Vespa schema planner"
+requires-python = ">=3.11,<3.14"
+license = {text = "Apache-2.0"}
+dependencies = ["PyYAML>=6.0", "pyvespa==1.2.4"]
+
+[project.scripts]
+migrate2vespa = "migrate2vespa.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

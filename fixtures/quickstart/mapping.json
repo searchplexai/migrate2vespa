@@ -1,0 +1,20 @@
+{
+  "mappings": {
+    "properties": {
+      "id": {"type": "keyword"},
+      "sku": {"type": "keyword"},
+      "title": {
+        "type": "text",
+        "fields": {"raw": {"type": "keyword"}}
+      },
+      "description": {"type": "text", "analyzer": "catalog_english"},
+      "brand": {"type": "keyword"},
+      "category": {"type": "keyword"},
+      "price": {"type": "double"},
+      "in_stock": {"type": "boolean"},
+      "popularity": {"type": "integer"},
+      "tags": {"type": "keyword"},
+      "embedding": {"type": "dense_vector", "dims": 8, "similarity": "cosine"}
+    }
+  }
+}

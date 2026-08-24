@@ -1,0 +1,13 @@
+{
+  "settings": {
+    "analysis": {
+      "analyzer": {
+        "catalog_english": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "filter": ["lowercase", "stemmer"]
+        }
+      }
+    }
+  }
+}

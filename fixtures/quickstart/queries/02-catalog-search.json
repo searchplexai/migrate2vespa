@@ -1,0 +1,12 @@
+{
+  "query": {
+    "bool": {
+      "must": {"match": {"title": "classic red shoes"}},
+      "filter": [
+        {"term": {"category": "shoes"}},
+        {"term": {"in_stock": true}}
+      ]
+    }
+  },
+  "size": 10
+}

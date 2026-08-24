@@ -1,0 +1,12 @@
+{
+  "query": {
+    "function_score": {
+      "query": {"match": {"title": "trail shoes"}},
+      "field_value_factor": {
+        "field": "popularity",
+        "factor": 0.01,
+        "modifier": "log1p"
+      }
+    }
+  }
+}
