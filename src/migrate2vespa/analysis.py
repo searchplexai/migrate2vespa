@@ -114,7 +114,7 @@ def analyze_inspection(
     if not coverage.all_supplied_accounted_for:
         blockers.append("Artifact coverage is incomplete; at least one supplied item has no assessment outcome")
     manifest = MigrationManifest(
-        tool_version="0.1.0",
+        tool_version="0.1.0a1",
         project_name=sanitize_name(inspection.index_name),
         input_directory=portable_input_path(input_directory, output_directory),
         fields=fields,

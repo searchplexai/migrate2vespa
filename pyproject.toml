@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "migrate2vespa"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Workload-aware Elasticsearch/OpenSearch to Vespa schema planner"
 requires-python = ">=3.11,<3.14"
 license = {text = "Apache-2.0"}
