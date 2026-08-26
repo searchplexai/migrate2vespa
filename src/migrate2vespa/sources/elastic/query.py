@@ -1,11 +1,10 @@
-"""Conservative Query DSL evidence extraction for the v0.1 supported subset."""
+"""Query DSL evidence extraction for recognized Elasticsearch/OpenSearch operators."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from ...manifest import Decision, QueryAssessment, worst_decision
-
 
 KNOWN_QUERY_OPERATORS = {
     "bool",
@@ -91,6 +90,16 @@ def assess_query(
         decision = worst_decision(decision, Decision.ADAPT)
         signals.append("ann_retrieval")
         reasons.append("ANN retrieval requires an indexed tensor and an explicit Vespa query design")
+        knn_fields = [
+            field_name
+            for field_name, usages in field_usage.items()
+            if "vector_retrieval" in usages
+        ]
+        if not knn_fields:
+            decision = worst_decision(decision, Decision.REVIEW)
+            signals.append("knn_field_unresolved")
+            reasons.append("kNN query does not identify a vector field")
+            risks.append("ann_field_evidence_incomplete")
 
     bool_options = _bool_options(clause)
     if bool_options:
@@ -107,7 +116,7 @@ def assess_query(
     if unknown:
         decision = worst_decision(decision, Decision.REVIEW)
         signals.append("unknown_query_construct")
-        reasons.append("Query DSL operators outside the v0.1 subset require review: " + ", ".join(unknown))
+        reasons.append("Unrecognized Query DSL operators require review: " + ", ".join(unknown))
 
     allowed_top_level = {
         "query", "knn", "size", "from", "sort", "_source", "track_total_hits",
@@ -162,8 +171,8 @@ def collect_query_evidence(clause: Any) -> tuple[list[str], dict[str, set[str]]]
                 for field_name in child:
                     add(str(field_name), field_operators[operator])
                 continue
-            if operator == "knn" and isinstance(child, dict) and isinstance(child.get("field"), str):
-                add(child["field"], "vector_retrieval")
+            if operator == "knn":
+                _record_knn_fields(child, add)
                 continue
             if operator == "bool" and isinstance(child, dict):
                 for key in ("must", "filter", "should", "must_not"):
@@ -176,6 +185,14 @@ def collect_query_evidence(clause: Any) -> tuple[list[str], dict[str, set[str]]]
 
     visit(clause)
     return _dedupe(constructs), usage
+
+
+def _record_knn_fields(child: Any, add) -> None:
+    """Record vector fields from object-form or array-form kNN clauses."""
+    entries = child if isinstance(child, list) else [child]
+    for item in entries:
+        if isinstance(item, dict) and isinstance(item.get("field"), str):
+            add(item["field"], "vector_retrieval")
 
 
 def _unknown_query_operators(clause: Any) -> list[str]:
@@ -260,10 +277,20 @@ def _leaf_options(clause: Any) -> list[str]:
                         if options:
                             findings.append(f"range.{field_name} ({', '.join(options)})")
                 continue
-            if operator == "knn" and isinstance(child, dict):
-                options = sorted(set(child) - {"field", "query_vector", "k", "num_candidates"})
-                if options:
-                    findings.append(f"knn ({', '.join(options)})")
+            if operator == "knn":
+                entries = child if isinstance(child, list) else [child]
+                for index, item in enumerate(entries):
+                    label = f"knn[{index}]" if isinstance(child, list) else "knn"
+                    if not isinstance(item, dict):
+                        findings.append(f"{label} has an unrecognized definition")
+                        continue
+                    options = sorted(
+                        set(item) - {"field", "query_vector", "k", "num_candidates"}
+                    )
+                    if options:
+                        findings.append(f"{label} ({', '.join(options)})")
+                    if not isinstance(item.get("field"), str):
+                        findings.append(f"{label} does not identify a vector field")
                 continue
             if operator == "bool" and isinstance(child, dict):
                 for key in ("must", "filter", "should", "must_not"):
@@ -286,16 +313,16 @@ def _sort_evidence(sort: Any) -> tuple[list[dict[str, Any]], list[str]]:
             evidence.append({"field": item, "order": "asc", "options": {}})
             continue
         if not isinstance(item, dict) or len(item) != 1:
-            reasons.append("sort contains an unsupported definition")
+            reasons.append("sort contains an unrecognized definition")
             continue
         field_name, definition = next(iter(item.items()))
         if isinstance(definition, str):
             evidence.append({"field": str(field_name), "order": definition, "options": {}})
             if definition not in {"asc", "desc"}:
-                reasons.append(f"sort.{field_name} uses unsupported order {definition}")
+                reasons.append(f"sort.{field_name} uses unrecognized order {definition}")
             continue
         if not isinstance(definition, dict):
-            reasons.append(f"sort.{field_name} has an unsupported definition")
+            reasons.append(f"sort.{field_name} has an unrecognized definition")
             continue
         order = str(definition.get("order", "asc"))
         options = {str(key): value for key, value in definition.items() if key != "order"}
@@ -328,9 +355,22 @@ def _aggregation_evidence(body: dict[str, Any]) -> tuple[list[str], list[str], l
                 types.append(operator)
                 config = definition.get(operator)
                 if operator not in BASIC_AGGREGATIONS:
-                    problems.append(f"aggregation type {operator} is outside the v0.1 subset")
-                if isinstance(config, dict) and isinstance(config.get("field"), str):
+                    problems.append(f"aggregation type {operator} is not recognized")
+                if not isinstance(config, dict):
+                    problems.append(f"aggregation {name}.{operator} has an invalid definition")
+                    continue
+                if isinstance(config.get("field"), str):
                     fields.add(config["field"])
+                extras = sorted(str(key) for key in config if key != "field")
+                if extras:
+                    problems.append(
+                        f"aggregation {name}.{operator} options require review: "
+                        + ", ".join(extras)
+                    )
+                elif "field" not in config:
+                    problems.append(
+                        f"aggregation {name}.{operator} does not identify a field"
+                    )
             child = definition.get("aggs", definition.get("aggregations"))
             if isinstance(child, dict):
                 visit(child)

@@ -1,4 +1,4 @@
-"""Stable Elasticsearch/OpenSearch rules shipped in migrate2vespa v0.1."""
+"""Stable Elasticsearch/OpenSearch rules shipped with migrate2vespa."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ _RULES = (
         "date fields with a supported declared format", Decision.ADAPT,
         "Supported date values are normalized to epoch-second Vespa longs.",
         True, "synthetic/date", (RequiredCapability.RANGE,),
-        ("Unsupported or ambiguous formats are not generated.",),
+        ("Ambiguous or unrecognized formats are not generated.",),
     ),
     _rule(
         "ES-MULTIFIELD-001", "Multi-field", "field",
@@ -133,7 +133,7 @@ _RULES = (
         "a keyword field referencing a normalizer", Decision.ADAPT,
         "A verified lowercase-only normalizer can be reproduced during feed conversion.",
         True, "synthetic/lowercase-normalizer", surface="TEXT_ANALYSIS",
-        limitations=("Other normalizer chains are not generated in v0.1.",),
+        limitations=("Only lowercase-only normalizers are generated.",),
     ),
     _rule(
         "ES-DENSE-VECTOR-001", "Dense vector field", "field",
@@ -200,9 +200,9 @@ _RULES = (
         True, "quickstart/vector", (RequiredCapability.ANN,),
     ),
     _rule(
-        "ES-UNSUPPORTED-001", "Unsupported source construct", "field",
-        "a field type or mapping semantic outside the v0.1 registry", Decision.REVIEW,
-        "No safe v0.1 rule can construct a target field without inventing semantics.",
+        "ES-UNSUPPORTED-001", "Unrecognized source construct", "field",
+        "a field type or mapping semantic outside the recognized registry", Decision.REVIEW,
+        "No safe rule can construct a target field without inventing semantics.",
         False, "synthetic/unsupported",
     ),
 )
@@ -231,7 +231,7 @@ def effective_field_semantics(
     properties: dict[str, Any],
     rule_id: str,
 ) -> dict[str, Claim]:
-    """Return only semantics needed by the v0.1 Vespa planner."""
+    """Return the field semantics needed by the Vespa planner."""
     source = f"{rule_id}:common-elasticsearch-opensearch-semantics"
     keyword = source_type == "keyword"
     text = source_type == "text"

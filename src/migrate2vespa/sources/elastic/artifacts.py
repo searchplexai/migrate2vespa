@@ -142,7 +142,7 @@ def extract_properties(mapping: Any) -> dict[str, Any]:
             isinstance(item, dict) and "mappings" in item for item in current.values()
         ):
             raise InputError(
-                "v0.1 supports one source index per migration run. "
+                "migrate2vespa assesses one source index per run. "
                 "Export one index mapping at a time."
             )
         typed = [

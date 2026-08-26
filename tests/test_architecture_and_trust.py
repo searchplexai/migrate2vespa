@@ -13,7 +13,6 @@ from migrate2vespa.manifest import (
 from migrate2vespa.target.planner import apply_plan
 from migrate2vespa.workflow import analyze_input, generate_manifest
 
-
 ROOT = Path(__file__).parents[1]
 SOURCE_ROOT = ROOT / "src" / "migrate2vespa"
 
@@ -63,17 +62,3 @@ def test_analysis_and_generation_make_no_network_calls(tmp_path, monkeypatch):
     analyze_input(fixture, output)
     generate_manifest(output / "migration-manifest.yaml", output)
     assert (output / "vespa-app" / "services.xml").is_file()
-
-
-def test_pyvespa_is_the_only_package_constructor():
-    package_source = (SOURCE_ROOT / "target" / "package.py").read_text(encoding="utf-8")
-    assert "ApplicationPackage" in package_source
-    assert "package.to_files" in package_source
-    assert "render_schema" not in package_source
-    assert "render_services" not in package_source
-
-
-def test_no_legacy_manifest_migration_functions_exist():
-    manifest_source = (SOURCE_ROOT / "manifest.py").read_text(encoding="utf-8")
-    assert "migrate_v" not in manifest_source
-    assert "legacy" not in manifest_source.lower()

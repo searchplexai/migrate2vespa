@@ -1,4 +1,4 @@
-"""Elastic-family field semantics supported by migrate2vespa v0.1."""
+"""Elastic-family field semantics recognized by migrate2vespa."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ from ..rules import registry_can_generate, registry_decision
 from .rules import PATTERN_REGISTRY, USAGE_RULES, effective_field_semantics
 from .text_analysis import BUILTIN_LUCENE_ANALYZERS, analysis_config
 
-
 FIELD_TYPES: dict[str, tuple[LogicalType, str]] = {
     "text": (LogicalType.TEXT, "ES-FIELD-TEXT-001"),
     "keyword": (LogicalType.STRING, "ES-FIELD-KEYWORD-001"),
@@ -44,6 +43,9 @@ TYPE_PARAMETERS = {
     "keyword": {"normalizer"},
     "date": {"format"},
     "dense_vector": {"dims", "similarity"},
+    # object/nested: recognize `properties` so the container reports once.
+    "object": {"properties"},
+    "nested": {"properties"},
 }
 DATE_FORMATS = {"strict_date_optional_time", "epoch_millis", "epoch_second"}
 VECTOR_METRICS = {
@@ -75,13 +77,21 @@ def assess_field(
     safe = True
 
     definition = FIELD_TYPES.get(source_type)
-    if definition is None or context not in {None, "multi_field"}:
+    inside_unrecognized_container = context not in {None, "multi_field"}
+    if definition is None or inside_unrecognized_container:
         rules.append("ES-UNSUPPORTED-001")
         decision = Decision.REVIEW
         safe = False
-        reasons.append(
-            f"Field type or structure {source_type} is outside the v0.1 supported subset"
-        )
+        if inside_unrecognized_container:
+            # The field type may be recognized on its own; the container is not.
+            reasons.append(
+                f"Field belongs to the {context} structure "
+                f"{name.rsplit('.', 1)[0]}, which is not recognized"
+            )
+        else:
+            reasons.append(
+                f"Field type or structure {source_type} is not recognized"
+            )
     else:
         logical_type, base_rule = definition
         rules.append(base_rule)
@@ -94,7 +104,7 @@ def assess_field(
         decision = Decision.REVIEW
         safe = False
         reasons.append(
-            "Mapping parameters outside the v0.1 subset require review: "
+            "Unrecognized mapping parameters require review: "
             + ", ".join(unknown_parameters)
         )
 
@@ -136,7 +146,10 @@ def assess_field(
     if custom_analyzers:
         rules.append("ES-CUSTOM-ANALYZER-001")
         risks.append("linguistic_parity_unknown")
-        reasons.append("Custom analyzer requires human review; linguistic equivalence is not claimed")
+        reasons.append(
+            "Custom analysis is referenced; the target field is clear but linguistic "
+            "equivalence is not claimed"
+        )
     elif builtin_analyzers:
         rules.append("ES-LUCENE-ANALYZER-001")
         decision = worst_decision(decision, Decision.ADAPT)
@@ -153,7 +166,7 @@ def assess_field(
             reasons.append("Lowercase normalization is reproduced during feed conversion")
         else:
             safe = False
-            reasons.append("Referenced normalizer is outside the v0.1 deterministic subset")
+            reasons.append("Referenced normalizer is not recognized for generation")
 
     raw_values = [value_at_path(document.fields, source_path) for document in documents]
     observation = _cardinality(source_type, raw_values, bool(documents))
@@ -180,7 +193,15 @@ def assess_field(
 
     if source_type == "date" and logical_type is not None:
         declared_format = str(props.get("format", "strict_date_optional_time||epoch_millis"))
-        if _supported_date_format(declared_format):
+        if _dual_epoch_date_format(declared_format):
+            safe = False
+            decision = worst_decision(decision, Decision.REVIEW)
+            reasons.append(
+                "Date format combines epoch_millis and epoch_second; "
+                "Elasticsearch tries formats in declaration order and generation "
+                "refuses to guess the unit"
+            )
+        elif _supported_date_format(declared_format):
             decision = worst_decision(decision, Decision.ADAPT)
             transforms.append(
                 TransformSpec("date_to_epoch_seconds", {"declared_format": declared_format})
@@ -192,7 +213,7 @@ def assess_field(
         else:
             safe = False
             decision = worst_decision(decision, Decision.REVIEW)
-            reasons.append(f"Date format is outside the v0.1 deterministic subset: {declared_format}")
+            reasons.append(f"Date format is not recognized for generation: {declared_format}")
 
     if source_type == "dense_vector" and logical_type is not None:
         dims = props.get("dims")
@@ -202,7 +223,7 @@ def assess_field(
             reasons.append("dense_vector requires a positive declared dims value")
         elif similarity is not None and str(similarity) not in VECTOR_METRICS:
             safe = False
-            reasons.append(f"dense_vector similarity is unsupported: {similarity}")
+            reasons.append(f"dense_vector similarity is not recognized: {similarity}")
         else:
             vector_dimensions = dims
             distance_metric = VECTOR_METRICS.get(str(similarity), "angular")
@@ -283,7 +304,9 @@ def assess_field(
         vector_cell_type="float" if logical_type is LogicalType.VECTOR else None,
         generation_scope=(
             GenerationScope.SUBTREE
-            if context not in {None, "multi_field"} or source_type == "object"
+            if context not in {None, "multi_field"}
+            or source_type == "object"
+            or isinstance(props.get("properties"), dict)
             else GenerationScope.FIELD
         ),
     )
@@ -326,6 +349,10 @@ def resolve_query_evidence(
     query.field_usage = resolved_usage
     query.observed_fields = sorted(resolved_usage)
     query.rules = list(dict.fromkeys(query.rules + query_rules))
+    decision = worst_decision(
+        decision,
+        registry_decision(PATTERN_REGISTRY, query.rules),
+    )
     return decision, list(dict.fromkeys(reasons))
 
 
@@ -337,7 +364,7 @@ def _resolve_usage(raw: str, logical_type: LogicalType | None) -> tuple[str | No
             return "text_search", None
         if logical_type is LogicalType.STRING:
             return "single_token_match", None
-        return None, "match semantics are unsupported for this field type"
+        return None, "match semantics do not apply to this field type"
     if raw in {"term_query", "terms_query"}:
         if logical_type is LogicalType.TEXT:
             return "analyzed_term", "term on analyzed text is not whole-value exact matching"
@@ -351,7 +378,7 @@ def _resolve_usage(raw: str, logical_type: LogicalType | None) -> tuple[str | No
             LogicalType.TEMPORAL,
         }:
             return "exact_filter", None
-        return None, "exact filtering is unsupported for this field type"
+        return None, "exact filtering does not apply to this field type"
     if raw == "range_query":
         if logical_type in {
             LogicalType.INTEGER,
@@ -374,7 +401,7 @@ def _resolve_usage(raw: str, logical_type: LogicalType | None) -> tuple[str | No
         if logical_type is LogicalType.VECTOR:
             return "vector_retrieval", None
         return None, "ANN retrieval requires a dense_vector field"
-    return None, f"query usage {raw} is outside the v0.1 subset"
+    return None, f"query usage {raw} is not recognized"
 
 
 def _declared_usage_conflict(raw: str, field: FieldAssessment) -> str | None:
@@ -441,10 +468,6 @@ def annotate_analysis_evidence(fields: list[FieldAssessment], settings: Any) -> 
         field.source_evidence = list(dict.fromkeys(field.source_evidence))
 
 
-def assess_mapping_signals(mapping: dict[str, Any]) -> dict[str, Any]:
-    return {}
-
-
 def assess_mapping_options(mapping: dict[str, Any]) -> list[str]:
     current: Any = mapping.get("mappings", mapping)
     if isinstance(current, dict) and len(current) == 1 and "properties" not in current:
@@ -455,7 +478,7 @@ def assess_mapping_options(mapping: dict[str, Any]) -> list[str]:
         return []
     unsupported = sorted(set(current) - {"properties", "_meta"})
     return (
-        ["Mapping options outside the v0.1 subset require review: " + ", ".join(unsupported)]
+        ["Unrecognized mapping options require review: " + ", ".join(unsupported)]
         if unsupported
         else []
     )
@@ -491,9 +514,22 @@ def _cardinality(
     )
 
 
+def _date_format_parts(value: str) -> list[str]:
+    return [item.strip() for item in value.split("||") if item.strip()]
+
+
+def _dual_epoch_date_format(value: str) -> bool:
+    parts = _date_format_parts(value)
+    return "epoch_millis" in parts and "epoch_second" in parts
+
+
 def _supported_date_format(value: str) -> bool:
-    parts = {item.strip() for item in value.split("||") if item.strip()}
-    return bool(parts) and parts.issubset(DATE_FORMATS)
+    parts = _date_format_parts(value)
+    if not parts or not set(parts).issubset(DATE_FORMATS):
+        return False
+    if "epoch_millis" in parts and "epoch_second" in parts:
+        return False
+    return True
 
 
 def _is_lowercase_normalizer(name: str, settings: dict[str, Any]) -> bool:

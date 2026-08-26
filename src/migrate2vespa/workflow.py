@@ -5,10 +5,10 @@ import tempfile
 from pathlib import Path
 
 from .analysis import analyze_inspection, portable_input_path
-from .target.package import generate as generate_package
 from .io import InputError, default_output_directory, read_manifest, write_yaml
 from .manifest import MigrationManifest
 from .sources.registry import get_source
+from .target.package import generate as generate_package
 
 
 def analyze_directory(

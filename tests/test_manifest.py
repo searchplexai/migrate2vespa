@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 
 import pytest
 import yaml
 
 from migrate2vespa.io import InputError, read_manifest, write_yaml
-from migrate2vespa.manifest import EvidenceLevel, FORMAT_VERSION, MigrationManifest
+from migrate2vespa.manifest import FORMAT_VERSION, EvidenceLevel, MigrationManifest
 from migrate2vespa.workflow import analyze_input
 
 

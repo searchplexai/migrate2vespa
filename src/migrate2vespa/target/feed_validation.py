@@ -6,7 +6,6 @@ from typing import Any, Mapping
 
 from ..manifest import TargetFieldPlan
 
-
 _ARRAY = re.compile(r"^array<(.+)>$")
 _DENSE_TENSOR = re.compile(
     r"^tensor<float>\([A-Za-z_][A-Za-z0-9_]*\[(\d+)]\)$"

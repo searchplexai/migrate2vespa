@@ -16,11 +16,16 @@ from ..io import (
     read_manifest,
     write_yaml,
 )
-from ..manifest import FieldAssessment, MigrationManifest, TargetFieldPlan, value_at_path
+from ..manifest import (
+    FieldAssessment,
+    MigrationManifest,
+    TargetFieldPlan,
+    value_at_path,
+)
 from ..sources.contract import DecodedSourceDocument, DocumentDecoder
 from .feed_validation import FeedValidationError, validate_document_values
-from .selection import build_generation_plan, retained_fields
 from .planner import validate_field_plan
+from .selection import build_generation_plan, retained_fields
 from .transforms import TransformError, apply_transforms, validate_transform
 
 
@@ -100,12 +105,19 @@ def _construct_package_with_pyvespa(
     manifest: MigrationManifest,
     generated: list[FieldAssessment],
 ) -> None:
-    """Construct the alpha package with PyVespa as the sole constructor."""
+    """Construct the application package with PyVespa as the sole constructor."""
     try:
-        from vespa.package import ApplicationPackage, Document, Field, HNSW, RankProfile, Schema
+        from vespa.package import (
+            HNSW,
+            ApplicationPackage,
+            Document,
+            Field,
+            RankProfile,
+            Schema,
+        )
     except ImportError as exc:
         raise GenerationError(
-            "PyVespa is required to generate a v0.1 package. Reinstall migrate2vespa with its declared dependencies.",
+            "PyVespa is required to generate a package. Reinstall migrate2vespa with its declared dependencies.",
             "GENERATION_DEPENDENCY_MISSING",
         ) from exc
     try:
@@ -152,7 +164,7 @@ def _construct_package_with_pyvespa(
             )
         package.to_files(str(app_directory))
     except Exception as exc:
-        raise GenerationError(f"PyVespa could not construct the v0.1 package: {exc}") from exc
+        raise GenerationError(f"PyVespa could not construct the package: {exc}") from exc
 
 
 def generate(
@@ -192,7 +204,7 @@ def generate(
             manifest.validation["stale_package"] = stale_directory.name
         write_yaml(manifest_path, manifest)
         state = "blocker remains" if len(blockers) == 1 else "blockers remain"
-        lines = ["Cannot generate a safe Vespa v0.1.", "", f"{len(blockers)} schema {state}:", ""]
+        lines = ["Cannot generate a safe Vespa package.", "", f"{len(blockers)} schema {state}:", ""]
         lines.extend(f"- {item}" for item in blockers)
         lines.extend(["", "See migration-manifest.yaml for details."])
         raise GenerationError("\n".join(lines), "GENERATION_SCHEMA_BLOCKED")
@@ -240,7 +252,7 @@ def generate(
         raise
     except Exception as exc:
         shutil.rmtree(staging_root, ignore_errors=True)
-        message = f"PyVespa could not construct the v0.1 package: {exc}"
+        message = f"PyVespa could not construct the package: {exc}"
         manifest.generation.status = "ERROR"
         manifest.validation["generation"] = "ERROR"
         manifest.validation["generation_error"] = message

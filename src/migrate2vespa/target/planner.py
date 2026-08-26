@@ -20,7 +20,6 @@ from ..manifest import (
     TransformSpec,
 )
 
-
 _SCALAR_TYPES = {
     LogicalType.TEXT: "string",
     LogicalType.STRING: "string",
@@ -159,7 +158,6 @@ def _capability_issues(
 ) -> tuple[str, ...]:
     """Reject capability/type combinations that do not preserve target semantics."""
     logical_type = field.logical_type
-    capabilities = set(field.required_capabilities)
     available = set(plan.indexing)
     comparable_types = {
         LogicalType.INTEGER,

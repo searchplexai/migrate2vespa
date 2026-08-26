@@ -18,6 +18,8 @@ _PARAMETERS: dict[str, set[str]] = {
     "lowercase_string": set(),
 }
 
+_EPOCH_FORMATS = frozenset({"epoch_millis", "epoch_second"})
+
 
 def validate_transform(spec: TransformSpec) -> None:
     allowed = _PARAMETERS.get(spec.operation)
@@ -65,29 +67,46 @@ def _map_values(value: Any, transform: Callable[[Any], Any]) -> Any:
     return transform(value)
 
 
+def _date_formats(declared_format: str) -> list[str]:
+    """Return formats in Elasticsearch declaration order."""
+    return [item.strip() for item in declared_format.split("||") if item.strip()]
+
+
 def _date_to_epoch_seconds(value: Any, declared_format: str) -> int:
     if isinstance(value, bool):
         raise TransformError("Boolean is not a valid date")
-    formats = {item.strip() for item in declared_format.split("||") if item.strip()}
-    epoch_unit = (
-        "epoch_second" if "epoch_second" in formats
-        else "epoch_millis" if "epoch_millis" in formats
-        else None
-    )
-    numeric: float | None = None
-    if isinstance(value, (int, float)):
-        numeric = float(value)
-    elif isinstance(value, str):
+    formats = _date_formats(declared_format)
+    if not formats:
+        raise TransformError(f"Date format is empty: {declared_format!r}")
+    if "epoch_millis" in formats and "epoch_second" in formats:
+        # Dual epoch units are ambiguous for numeric values; generation must not guess.
+        raise TransformError(
+            "Date format combines epoch_millis and epoch_second; "
+            "declaration order cannot be recovered safely here"
+        )
+
+    errors: list[TransformError] = []
+    for format_name in formats:
         try:
-            numeric = float(value)
-        except ValueError:
-            numeric = None
-    if numeric is not None:
-        if epoch_unit == "epoch_second":
+            return _parse_date_with_format(value, format_name)
+        except TransformError as exc:
+            errors.append(exc)
+    if errors:
+        raise errors[-1]
+    raise TransformError(f"Unsupported date value: {value!r}")
+
+
+def _parse_date_with_format(value: Any, format_name: str) -> int:
+    if format_name in _EPOCH_FORMATS:
+        numeric = _as_numeric(value)
+        if numeric is None:
+            raise TransformError(f"Numeric epoch value required for {format_name}")
+        if format_name == "epoch_second":
             return math.floor(numeric)
-        if epoch_unit == "epoch_millis":
-            return math.floor(numeric / 1000)
-        raise TransformError(f"Numeric date has no declared epoch unit: {declared_format}")
+        return math.floor(numeric / 1000)
+
+    if format_name != "strict_date_optional_time":
+        raise TransformError(f"Unrecognized date format: {format_name}")
     if not isinstance(value, str):
         raise TransformError(f"Unsupported date value: {value!r}")
     normalized = value.replace("Z", "+00:00")
@@ -98,3 +117,16 @@ def _date_to_epoch_seconds(value: Any, declared_format: str) -> int:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return math.floor(parsed.timestamp())
+
+
+def _as_numeric(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None

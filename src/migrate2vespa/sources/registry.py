@@ -1,4 +1,4 @@
-"""Internal source implementation selection."""
+"""Selects the active source implementation."""
 
 from collections.abc import Callable
 

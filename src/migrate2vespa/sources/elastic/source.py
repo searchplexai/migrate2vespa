@@ -28,7 +28,6 @@ from .fields import (
     annotate_analysis_evidence,
     assess_field,
     assess_mapping_options,
-    assess_mapping_signals,
     assess_settings,
     resolve_query_evidence,
     value_compatible,
@@ -39,7 +38,7 @@ from .text_analysis import assess_text_analysis
 
 
 class ElasticSource:
-    """Interpret the supported common Elasticsearch/OpenSearch artifact subset."""
+    """Interpret common Elasticsearch/OpenSearch artifacts."""
 
     id = "elastic-family"
     registry = PATTERN_REGISTRY
@@ -75,10 +74,7 @@ class ElasticSource:
         settings_summary, settings_issues = assess_settings(
             inspection.settings
         )
-        source_signals = assess_mapping_signals(inspection.mapping)
-        source_signals.update(
-            assess_text_analysis(fields, inspection.settings)
-        )
+        source_signals = assess_text_analysis(fields, inspection.settings)
 
         return SourceAssessment(
             fields=fields,

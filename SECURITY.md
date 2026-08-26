@@ -1,6 +1,6 @@
 # Security and trust boundary
 
-migrate2vespa v0.1 is deliberately offline-first.
+migrate2vespa is offline-first.
 
 ## Runtime boundary
 

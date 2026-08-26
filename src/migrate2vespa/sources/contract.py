@@ -77,7 +77,7 @@ class SourceAssessment:
 
 
 class Source(DocumentDecoder, Protocol):
-    """Narrow contract implemented by one source family."""
+    """Contract implemented by one source family."""
 
     id: str
     registry: RuleRegistry

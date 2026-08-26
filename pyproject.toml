@@ -1,20 +1,50 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "migrate2vespa"
-version = "0.1.0a1"
-description = "Workload-aware Elasticsearch/OpenSearch to Vespa schema planner"
+version = "0.1.0"
+description = "Workload-aware schema migration planner for Vespa"
+readme = "README.md"
 requires-python = ">=3.11,<3.14"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Searchplex" }]
+maintainers = [{ name = "Searchplex" }]
+keywords = [
+    "elasticsearch",
+    "migration",
+    "opensearch",
+    "search",
+    "vespa",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Text Processing :: Indexing",
+]
 dependencies = ["PyYAML>=6.0", "pyvespa==1.2.4"]
+
+[project.urls]
+Homepage = "https://www.searchplex.net/"
+Source = "https://github.com/searchplexai/migrate2vespa"
+Documentation = "https://github.com/searchplexai/migrate2vespa#readme"
+Issues = "https://github.com/searchplexai/migrate2vespa/issues"
+Changelog = "https://github.com/searchplexai/migrate2vespa/blob/main/CHANGELOG.md"
 
 [project.scripts]
 migrate2vespa = "migrate2vespa.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.12"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -22,3 +52,12 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Catch unused imports and hard errors without imposing a full style rewrite.
+select = ["E9", "F"]

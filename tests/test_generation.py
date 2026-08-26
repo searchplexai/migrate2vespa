@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from migrate2vespa.io import read_manifest, write_yaml
-from migrate2vespa.target.package import GenerationError, generate, package_fingerprint
-from migrate2vespa.sources.elastic import ElasticSource
+from migrate2vespa.io import read_manifest
+from migrate2vespa.manifest import Decision, GenerationScope
+from migrate2vespa.target.package import GenerationError, package_fingerprint
 from migrate2vespa.workflow import analyze_input, generate_manifest
 
 
@@ -15,7 +15,7 @@ def test_quickstart_generates_pyvespa_package_and_feed(tmp_path):
     fixture = Path(__file__).parents[1] / "fixtures" / "quickstart"
     output = tmp_path / "out"
 
-    manifest = analyze_input(fixture, output)
+    analyze_input(fixture, output)
     generate_manifest(output / "migration-manifest.yaml", output)
     generated = read_manifest(output / "migration-manifest.yaml")
 
@@ -86,6 +86,39 @@ def test_isolated_unsupported_field_produces_partial_package(write_project):
     assert [item.source_path for item in manifest.generation.omitted] == ["mystery"]
     assert "field sku type string" in schema
     assert "field mystery" not in schema
+
+
+def test_nested_subtree_is_omitted_as_a_unit_without_blocking_the_package(write_project):
+    mapping = {"mappings": {"properties": {
+        "title": {"type": "text"},
+        "sku": {"type": "keyword"},
+        "variants": {"type": "nested", "properties": {
+            "color": {"type": "keyword"},
+            "size": {"type": "integer"},
+        }},
+    }}}
+    root = write_project(mapping, documents=[{"_id": "1", "_source": {
+        "title": "Shoe", "sku": "A", "variants": [{"color": "red", "size": 42}],
+    }}])
+    output = root / "out"
+    analyze_input(root, output)
+    generate_manifest(output / "migration-manifest.yaml", output)
+    manifest = read_manifest(output / "migration-manifest.yaml")
+    schema = (output / "vespa-app" / "schemas" / "project.sd").read_text()
+    operation = json.loads((output / "vespa-app" / "feed" / "documents.jsonl").read_text())
+    child = next(field for field in manifest.fields if field.source_name == "variants.color")
+
+    assert manifest.generation.status == "PARTIAL"
+    assert manifest.generation.package_blockers == []
+    assert [item.source_path for item in manifest.generation.omitted] == ["variants"]
+    omission = manifest.generation.omitted[0]
+    assert omission.scope is GenerationScope.SUBTREE
+    assert omission.covers == ("variants", "variants.color", "variants.size")
+    assert "field title type string" in schema
+    assert "variants" not in schema
+    assert "variants" not in operation["fields"]
+    assert child.decision is Decision.REVIEW
+    assert "nested structure variants" in child.reasons[0]
 
 
 def test_name_collision_blocks_and_publishes_no_current_package(write_project):

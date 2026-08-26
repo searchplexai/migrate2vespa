@@ -5,10 +5,10 @@ import shlex
 import sys
 from pathlib import Path
 
-from .target import GenerationError
 from .io import InputError, read_manifest
 from .manifest import MigrationManifest
 from .reporting import render_console_summary
+from .target import GenerationError
 from .workflow import analyze_input, generate_manifest
 
 
@@ -17,7 +17,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="migrate2vespa",
         description=(
             "Analyze local Elasticsearch/OpenSearch artifacts and, when safe, "
-            "generate a Vespa starter package."
+            "generate a Vespa application package."
         ),
         epilog=(
             "Advanced: migrate2vespa generate <migration-manifest.yaml> renders "

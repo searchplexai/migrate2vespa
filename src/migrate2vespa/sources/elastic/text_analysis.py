@@ -4,10 +4,7 @@ from typing import Any
 
 from ...manifest import FieldAssessment, OperationalStatus
 
-
-# Deliberately small v0.1 compatibility boundary. Built-in language analyzers have
-# a clear Vespa Lucene Linguistics path. Custom and unknown configurations require
-# human judgment rather than component-level inference.
+# Built-in analyzers map to Vespa Lucene Linguistics; custom ones need review.
 BUILTIN_LUCENE_ANALYZERS = {
     "simple", "whitespace", "stop", "keyword", "pattern", "fingerprint",
     "arabic", "armenian", "basque", "bengali", "brazilian", "bulgarian", "catalan",
@@ -71,7 +68,6 @@ def _normalizer_assessment(
     definitions = analysis.get("normalizer") or {}
     definition = definitions.get(name) if isinstance(definitions, dict) else None
 
-    # This is the one normalizer transformation already implemented by v0.1.
     lowercase_only = (
         name == "lowercase"
         or (
@@ -99,7 +95,7 @@ def _normalizer_assessment(
 
 
 def assess_text_analysis(fields: list[FieldAssessment], settings: Any) -> dict[str, Any]:
-    """Classify every referenced analyzer and normalizer using the v0.1 boundary."""
+    """Classify every referenced analyzer and normalizer."""
     analysis = analysis_config(settings)
     references: dict[tuple[str, str], set[str]] = {}
     for field in fields:

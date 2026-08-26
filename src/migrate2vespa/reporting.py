@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from .manifest import Decision, MigrationManifest, OperationalStatus
 
-
 CONSOLE_FIELD_STATUS_LABELS = {
     OperationalStatus.READY: "READY",
     OperationalStatus.READY_WITH_CAVEATS: "READY WITH CAVEATS",

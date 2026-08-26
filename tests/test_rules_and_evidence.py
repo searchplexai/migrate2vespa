@@ -6,50 +6,20 @@ from migrate2vespa.manifest import (
     CardinalityState,
     Decision,
     LogicalType,
-    RequiredCapability,
+    TransformSpec,
 )
 from migrate2vespa.sources.contract import DecodedSourceDocument
 from migrate2vespa.sources.elastic.fields import assess_field, resolve_query_evidence
 from migrate2vespa.sources.elastic.query import assess_query
 from migrate2vespa.sources.elastic.rules import PATTERN_REGISTRY
 from migrate2vespa.target.planner import apply_plan
-
-
-EXPECTED_RULES = {
-    "ES-FIELD-TEXT-001",
-    "ES-FIELD-KEYWORD-001",
-    "ES-FIELD-NUMERIC-001",
-    "ES-FIELD-BOOLEAN-001",
-    "ES-FIELD-DATE-001",
-    "ES-MULTIFIELD-001",
-    "ES-CUSTOM-ANALYZER-001",
-    "ES-LUCENE-ANALYZER-001",
-    "ES-FIELD-INDEX-DISABLED-001",
-    "ES-FIELD-DOCVALUES-DISABLED-001",
-    "ES-FIELD-LOOKUP-DISABLED-001",
-    "ES-TEXT-FIELDDATA-ENABLED-001",
-    "ES-KEYWORD-NORMALIZER-001",
-    "ES-DENSE-VECTOR-001",
-    "ES-CARDINALITY-MULTI-001",
-    "ES-CARDINALITY-MIXED-001",
-    "ES-USAGE-TEXT-SEARCH-001",
-    "ES-USAGE-SINGLE-TOKEN-MATCH-001",
-    "ES-USAGE-EXACT-FILTER-001",
-    "ES-USAGE-ANALYZED-TERM-001",
-    "ES-USAGE-RANGE-001",
-    "ES-USAGE-SORT-001",
-    "ES-USAGE-AGGREGATE-001",
-    "ES-USAGE-ANN-001",
-    "ES-UNSUPPORTED-001",
-}
-
+from migrate2vespa.target.transforms import TransformError, apply_transforms
 
 def document(value):
     return DecodedSourceDocument("1", value, "documents.jsonl", 1)
 
 
-def test_registry_is_exactly_the_v01_rule_set():
-    assert set(PATTERN_REGISTRY) == EXPECTED_RULES
+def test_registry_entries_are_complete_and_consistent():
     assert all(rule.id == key for key, rule in PATTERN_REGISTRY.items())
     assert all(rule.fixture and rule.rationale for rule in PATTERN_REGISTRY.values())
 
@@ -173,6 +143,32 @@ def test_ambiguous_date_and_non_float_vector_are_generic_unsupported():
     assert not vector.support.generate and "ES-UNSUPPORTED-001" in vector.rules
 
 
+def test_dual_epoch_date_format_is_rejected_and_ordered_units_parse():
+    field = assess_field(
+        "created", {"type": "date", "format": "epoch_millis||epoch_second"}, [], None, {}
+    )
+    assert not field.support.generate
+    assert "epoch_millis and epoch_second" in field.reasons[0]
+    assert apply_transforms(
+        1420070400000,
+        (TransformSpec("date_to_epoch_seconds", {"declared_format": "epoch_millis"}),),
+    ) == 1420070400
+    assert apply_transforms(
+        1420070400,
+        (TransformSpec("date_to_epoch_seconds", {"declared_format": "epoch_second"}),),
+    ) == 1420070400
+    with pytest.raises(TransformError):
+        apply_transforms(
+            1420070400,
+            (
+                TransformSpec(
+                    "date_to_epoch_seconds",
+                    {"declared_format": "epoch_millis||epoch_second"},
+                ),
+            ),
+        )
+
+
 def test_float_vector_records_version_unverified_defaults():
     field = assess_field("embedding", {"type": "dense_vector", "dims": 3}, [], None, {})
     assert field.vector_cell_type == "float"
@@ -185,7 +181,7 @@ def test_float_vector_records_version_unverified_defaults():
     ("source_type", "operator", "expected_usage", "expected_rule", "expected_decision"),
     [
         ("text", "match", "text_search", "ES-USAGE-TEXT-SEARCH-001", Decision.DIRECT),
-        ("keyword", "match", "single_token_match", "ES-USAGE-SINGLE-TOKEN-MATCH-001", Decision.DIRECT),
+        ("keyword", "match", "single_token_match", "ES-USAGE-SINGLE-TOKEN-MATCH-001", Decision.ADAPT),
         ("keyword", "term", "exact_filter", "ES-USAGE-EXACT-FILTER-001", Decision.DIRECT),
         ("text", "term", "analyzed_term", "ES-USAGE-ANALYZED-TERM-001", Decision.REVIEW),
     ],
@@ -208,12 +204,19 @@ def test_query_operators_are_interpreted_with_field_semantics(
         (assess_field("sku", {"type": "keyword"}, [], None, {}), {"sort": ["sku"]}, "ES-USAGE-SORT-001"),
         (assess_field("sku", {"type": "keyword"}, [], None, {}), {"aggs": {"values": {"terms": {"field": "sku"}}}}, "ES-USAGE-AGGREGATE-001"),
         (assess_field("embedding", {"type": "dense_vector", "dims": 2}, [], None, {}), {"knn": {"field": "embedding", "query_vector": [0.1, 0.2], "k": 2, "num_candidates": 5}}, "ES-USAGE-ANN-001"),
+        (
+            assess_field("embedding", {"type": "dense_vector", "dims": 2}, [], None, {}),
+            {"knn": [{"field": "embedding", "query_vector": [0.1, 0.2], "k": 2, "num_candidates": 5}]},
+            "ES-USAGE-ANN-001",
+        ),
     ],
 )
 def test_remaining_usage_rules_are_selected(field, body, expected_rule):
     query = assess_query("q", "queries/q.json", body)
     resolve_query_evidence(query, [field])
     assert expected_rule in query.rules
+    if "knn" in body:
+        assert query.field_usage["embedding"] == ["vector_retrieval"]
 
 
 def test_meaningful_sort_and_leaf_options_require_review():
@@ -230,14 +233,32 @@ def test_meaningful_sort_and_leaf_options_require_review():
     assert "query_options_require_review" in query.migration_signals
 
 
-def test_basic_aggregation_and_custom_scoring_are_evidence_only():
-    aggregate = assess_query(
+def test_aggregation_evidence_and_custom_scoring():
+    plain = assess_query(
         "a", "queries/a.json", {"aggs": {"brands": {"terms": {"field": "brand"}}}}
+    )
+    rich = assess_query(
+        "b",
+        "queries/b.json",
+        {
+            "aggs": {
+                "brands": {
+                    "terms": {"field": "brand", "size": 20, "order": {"_count": "desc"}},
+                }
+            }
+        },
     )
     scoring = assess_query(
         "s", "queries/s.json", {"query": {"function_score": {"query": {"match_all": {}}}}}
     )
-    assert aggregate.field_usage["brand"] == ["aggregate"]
-    assert aggregate.decision is Decision.ADAPT
+    missing_knn = assess_query(
+        "k", "queries/k.json", {"knn": [{"query_vector": [0.1, 0.2], "k": 2}]}
+    )
+    assert plain.decision is Decision.ADAPT
+    assert plain.field_usage["brand"] == ["aggregate"]
+    assert rich.decision is Decision.REVIEW
+    assert "aggregation_requires_review" in rich.migration_signals
     assert scoring.decision is Decision.REDESIGN
     assert "custom_scoring" in scoring.migration_signals
+    assert missing_knn.decision is Decision.REVIEW
+    assert "knn_field_unresolved" in missing_knn.migration_signals

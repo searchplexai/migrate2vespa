@@ -3,10 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .sources.contract import Source, SourceInspection
-from .sources.rules import registry_capabilities, registry_decision
+from . import __version__
 from .io import sanitize_name
-from .target.selection import build_generation_plan
 from .manifest import (
     CardinalityState,
     CoverageLedger,
@@ -18,7 +16,11 @@ from .manifest import (
     Support,
     worst_decision,
 )
+from .sources.contract import Source, SourceInspection
+from .sources.rules import registry_capabilities, registry_decision
 from .target.planner import apply_plan
+from .target.selection import build_generation_plan
+
 
 def analyze_inspection(
     source: Source,
@@ -114,7 +116,7 @@ def analyze_inspection(
     if not coverage.all_supplied_accounted_for:
         blockers.append("Artifact coverage is incomplete; at least one supplied item has no assessment outcome")
     manifest = MigrationManifest(
-        tool_version="0.1.0a1",
+        tool_version=__version__,
         project_name=sanitize_name(inspection.index_name),
         input_directory=portable_input_path(input_directory, output_directory),
         fields=fields,
