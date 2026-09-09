@@ -4,9 +4,6 @@ Reproduce patterns with synthetic mappings, settings, queries and documents.
 Choose `DIRECT`, `ADAPT`, `REVIEW` or `REDESIGN`. Update the Pattern Registry
 and add a regression test.
 
-Do not contribute customer data. Refusal that is safer is as welcome as broader
-translation.
-
 ## Boundaries
 
 - Elastic parsing stays under `sources/elastic/`.

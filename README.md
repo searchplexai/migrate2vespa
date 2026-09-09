@@ -1,20 +1,21 @@
 # migrate2vespa
 
-A workload-aware schema migration planner for Vespa, currently supporting
-Elasticsearch and OpenSearch.
+A schema migration planner for Vespa, currently supporting Elasticsearch and
+OpenSearch.
 
-> Don't translate field types. Infer field requirements.
+Given a mapping—and optionally settings, sample documents, and representative
+queries—it:
 
-Reads local source artifacts, accounts for every supplied field, document and
-representative query, and writes a reviewable migration manifest. When safe, it
-also generates a Vespa application package with PyVespa.
+1. Creates a migration manifest showing how each field and configuration maps
+   to Vespa, with every decision classified as `DIRECT`, `ADAPT`, `REVIEW`, or
+   `REDESIGN`.
+2. Generates a starter Vespa application for the parts of the schema that can be
+   converted safely.
 
-Source-specific interpretation is isolated from the migration manifest, Vespa
-planner and package generator. Additional source engines can therefore be added
-without duplicating the Vespa planning pipeline.
+The tool works entirely from local files. It makes no network connections or
+LLM calls.
 
-Offline and deterministic. No cluster connections, no LLM, no behavioral-parity
-claim. Built by [Searchplex](https://www.searchplex.net/).
+Built by [Searchplex](https://www.searchplex.net/).
 
 ## Quickstart
 
@@ -34,7 +35,7 @@ python3 -m pip install -e .
 migrate2vespa fixtures/quickstart
 ```
 
-Next step printed on success: `vespa deploy --wait 600 out/vespa-app`.
+On success, the tool prints the command for deploying the generated app.
 
 ## Input
 
@@ -46,10 +47,14 @@ es-app/
 └── queries/              # optional _search request bodies
 ```
 
-Canonical names preferred; a single unambiguous `*mapping*.json` /
-`*setting*.json` is accepted. Documents may use `_id`/`_source` or an `id`
-field. Queries supply usage evidence; they are not compiled to YQL. One source
-index per run. `migrate2vespa ./mapping.json` is mapping-only.
+Use the filenames shown above. Documents may use Elasticsearch's `_id` and
+`_source` format or a plain `id` field.
+
+Queries help the tool understand how fields are used. They are not converted to
+YQL.
+
+Run one index at a time. Passing `mapping.json` directly runs without settings,
+documents, or queries.
 
 ## Output
 
@@ -62,12 +67,16 @@ es-app/out/
     └── feed/documents.jsonl
 ```
 
-The manifest records source semantics, evidence, capabilities, proposed Vespa
-fields, decisions, risks and rule IDs, plus a coverage ledger. Generation is
-`READY`, `PARTIAL` (omissions recorded; containers omitted with their children),
-or `BLOCKED`. See [docs/overview.md](docs/overview.md).
+The manifest explains what the tool found, what it converted, and what still
+needs attention.
 
-## Recognized surface
+The Vespa app is generated when it is safe to do so. Unsupported fields may be
+left out and listed in the manifest. If that would make the app unsafe,
+generation stops.
+
+See [docs/overview.md](docs/overview.md) for more detail.
+
+## Supported
 
 | Surface | Behavior |
 |---|---|
@@ -85,15 +94,8 @@ migrate2vespa ./es-app --output ./migration-work
 migrate2vespa generate ./es-app/out/migration-manifest.yaml
 ```
 
-Exit codes: `0` success, `2` invalid input, `3` blocked generation, `1` other
-failure. Status vocabulary: `READY`, `READY WITH CAVEATS`, `DECISION REQUIRED`,
-`REDESIGN REQUIRED`.
-
-## Trust boundary
-
-Reads only paths you supply. Writes under the chosen output directory. No
-credentials, telemetry or network clients at runtime. Review and validate the
-generated package before production use — [SECURITY.md](SECURITY.md).
+Exit codes are `0` for success, `2` for invalid input, `3` when generation is
+blocked, and `1` for an unexpected error.
 
 ## Development
 
