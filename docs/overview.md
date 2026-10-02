@@ -25,8 +25,19 @@ Start with `coverage` — every supplied field, query and document line should b
 accounted for. Then read each field top-down: `source` → `evidence` →
 `required` / `normalized` → `decision` → `target`.
 
-Decisions: `DIRECT`, `ADAPT`, `REVIEW`, `REDESIGN`. Rule IDs live in
-`src/migrate2vespa/sources/elastic/rules.py`.
+Each field and query has a decision:
+
+- `DIRECT`: A straightforward Vespa representation is known.
+- `ADAPT`: A known change is needed and recorded in the plan.
+- `REVIEW`: Human review is needed before claiming equivalent behavior.
+- `REDESIGN`: The source behavior needs a different design in Vespa.
+
+Rule IDs live in `src/migrate2vespa/sources/elastic/rules.py`.
+
+For query evidence, the tool recognizes `avg`, `cardinality`, `date_histogram`,
+`histogram`, `max`, `min`, `range`, `stats`, `sum`, `terms`, and `value_count`
+aggregations. It records their field usage; it does not translate them into
+Vespa queries. Aggregation options require review.
 
 `generation.omitted` lists what was left out of the package. `SUBTREE` omissions
 cover a container and everything under it.
