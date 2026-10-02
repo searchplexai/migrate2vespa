@@ -23,7 +23,7 @@ from ...manifest import (
 from ..contract import DecodedSourceDocument
 from ..rules import registry_can_generate, registry_decision
 from .rules import PATTERN_REGISTRY, USAGE_RULES, effective_field_semantics
-from .text_analysis import BUILTIN_LUCENE_ANALYZERS, analysis_config
+from .text_analysis import BUILTIN_LUCENE_ANALYZERS, analysis_config, index_settings
 
 FIELD_TYPES: dict[str, tuple[LogicalType, str]] = {
     "text": (LogicalType.TEXT, "ES-FIELD-TEXT-001"),
@@ -35,14 +35,16 @@ FIELD_TYPES: dict[str, tuple[LogicalType, str]] = {
     "double": (LogicalType.DOUBLE, "ES-FIELD-NUMERIC-001"),
     "date": (LogicalType.TEMPORAL, "ES-FIELD-DATE-001"),
     "dense_vector": (LogicalType.VECTOR, "ES-DENSE-VECTOR-001"),
+    "knn_vector": (LogicalType.VECTOR, "OS-KNN-VECTOR-001"),
 }
 
-COMMON_PARAMETERS = {"type", "fields", "meta", "index", "doc_values"}
+COMMON_PARAMETERS = {"type", "fields", "meta", "index", "doc_values", "copy_to"}
 TYPE_PARAMETERS = {
     "text": {"analyzer", "search_analyzer", "fielddata"},
-    "keyword": {"normalizer"},
+    "keyword": {"normalizer", "ignore_above"},
     "date": {"format"},
-    "dense_vector": {"dims", "similarity"},
+    "dense_vector": {"dims", "similarity", "element_type"},
+    "knn_vector": {"dimension", "space_type", "data_type"},
     # object/nested: recognize `properties` so the container reports once.
     "object": {"properties"},
     "nested": {"properties"},
@@ -52,6 +54,11 @@ VECTOR_METRICS = {
     "cosine": "angular",
     "dot_product": "dotproduct",
     "l2_norm": "euclidean",
+}
+OPENSEARCH_VECTOR_METRICS = {
+    "l2": "euclidean",
+    "cosinesimil": "angular",
+    "innerproduct": "dotproduct",
 }
 
 
@@ -108,6 +115,25 @@ def assess_field(
             + ", ".join(unknown_parameters)
         )
 
+    if source_type == "keyword" and "ignore_above" in props:
+        limit = props["ignore_above"]
+        if (
+            context == "multi_field"
+            and isinstance(limit, int)
+            and not isinstance(limit, bool)
+            and limit > 0
+        ):
+            transforms.append(TransformSpec("omit_above_length", {"limit": limit}))
+            decision = worst_decision(decision, Decision.ADAPT)
+            risks.append("over_limit_multifield_values_absent_from_target_field")
+            reasons.append("Over-limit values are omitted from this keyword multi-field")
+        else:
+            safe = False
+            decision = worst_decision(decision, Decision.REVIEW)
+            reasons.append(
+                "Standalone ignore_above requires separate stored and searchable values"
+            )
+
     if context == "multi_field" and logical_type is not None:
         rules.append("ES-MULTIFIELD-001")
         decision = worst_decision(decision, Decision.ADAPT)
@@ -136,7 +162,7 @@ def assess_field(
     custom_analyzers = [
         value
         for value in analyzer_names
-        if value != "standard" and (value in configured or value not in BUILTIN_LUCENE_ANALYZERS)
+        if value in configured or (value != "standard" and value not in BUILTIN_LUCENE_ANALYZERS)
     ]
     builtin_analyzers = [
         value
@@ -145,16 +171,33 @@ def assess_field(
     ]
     if custom_analyzers:
         rules.append("ES-CUSTOM-ANALYZER-001")
+        decision = worst_decision(decision, Decision.REVIEW)
         risks.append("linguistic_parity_unknown")
         reasons.append(
-            "Custom analysis is referenced; the target field is clear but linguistic "
-            "equivalence is not claimed"
+            "Custom analysis needs a Vespa linguistics design before this field can generate"
         )
     elif builtin_analyzers:
         rules.append("ES-LUCENE-ANALYZER-001")
-        decision = worst_decision(decision, Decision.ADAPT)
+        decision = worst_decision(decision, Decision.REVIEW)
         risks.append("lucene_linguistics_configuration_required")
-        reasons.append("Built-in Lucene analysis requires equivalent Vespa Lucene Linguistics configuration")
+        reasons.append(
+            "Built-in Lucene analysis needs Vespa Lucene Linguistics configuration before generation"
+        )
+    elif source_type == "text" and props.get("index") is not False:
+        risks.append("default_text_linguistics_differ")
+        reasons.append(
+            "Vespa default text analysis differs from Elasticsearch standard analysis; "
+            "linguistic equivalence is not claimed"
+        )
+
+    generation_note = None
+    if custom_analyzers or builtin_analyzers:
+        generation_note = "Linguistic equivalence is not claimed."
+    elif source_type == "text" and props.get("index") is not False:
+        generation_note = (
+            "Vespa default text analysis differs from Elasticsearch standard analysis; "
+            "linguistic equivalence is not claimed."
+        )
 
     normalizer = props.get("normalizer")
     if normalizer is not None:
@@ -215,21 +258,39 @@ def assess_field(
             decision = worst_decision(decision, Decision.REVIEW)
             reasons.append(f"Date format is not recognized for generation: {declared_format}")
 
-    if source_type == "dense_vector" and logical_type is not None:
-        dims = props.get("dims")
-        similarity = props.get("similarity")
+    if source_type in {"dense_vector", "knn_vector"} and logical_type is not None:
+        opensearch = source_type == "knn_vector"
+        knn_enabled = _opensearch_knn_enabled(settings or {}) if opensearch else None
+        dims = props.get("dimension" if opensearch else "dims")
+        similarity = props.get("space_type" if opensearch else "similarity")
+        metrics = OPENSEARCH_VECTOR_METRICS if opensearch else VECTOR_METRICS
         if not isinstance(dims, int) or isinstance(dims, bool) or dims <= 0:
             safe = False
-            reasons.append("dense_vector requires a positive declared dims value")
-        elif similarity is not None and str(similarity) not in VECTOR_METRICS:
+            reasons.append(f"{source_type} requires a positive declared dimension")
+        elif opensearch and props.get("data_type", "float") != "float":
             safe = False
-            reasons.append(f"dense_vector similarity is not recognized: {similarity}")
+            reasons.append("Only float knn_vector values are supported")
+        elif not opensearch and props.get("element_type", "float") != "float":
+            safe = False
+            reasons.append("Only float dense_vector values are supported")
+        elif opensearch and knn_enabled is not True:
+            safe = False
+            reasons.append("OpenSearch index.knn:true is required to establish ANN indexing")
+        elif similarity is not None and str(similarity) not in metrics:
+            safe = False
+            reasons.append(f"{source_type} similarity is not recognized: {similarity}")
         else:
             vector_dimensions = dims
-            distance_metric = VECTOR_METRICS.get(str(similarity), "angular")
+            distance_metric = metrics.get(
+                str(similarity), "euclidean" if opensearch else "angular"
+            )
             if similarity is None:
-                assumptions.append("dense_vector_similarity_is_cosine_for_the_unknown_source_version")
-            if "index" not in props:
+                assumptions.append(
+                    "opensearch_knn_space_defaults_to_l2"
+                    if opensearch
+                    else "dense_vector_similarity_is_cosine_for_the_unknown_source_version"
+                )
+            if not opensearch and "index" not in props:
                 assumptions.append("dense_vector_index_is_enabled_for_the_unknown_source_version")
             decision = worst_decision(decision, Decision.ADAPT)
             if assumptions:
@@ -252,22 +313,42 @@ def assess_field(
             source=f"{semantic_rule}:common-elasticsearch-opensearch-semantics",
             rule=semantic_rule,
         )
-    if source_type == "dense_vector":
-        similarity_value = props.get("similarity")
+    if source_type in {"dense_vector", "knn_vector"}:
+        similarity_key = "space_type" if source_type == "knn_vector" else "similarity"
+        similarity_value = props.get(similarity_key)
         effective["vector_similarity"] = Claim(
-            value=str(similarity_value or "cosine"),
+            value=str(
+                similarity_value
+                or ("l2" if source_type == "knn_vector" else "cosine")
+            ),
             evidence_level=(
                 EvidenceLevel.DECLARED
                 if similarity_value is not None
                 else EvidenceLevel.INFERRED
             ),
             source=(
-                f"mapping.properties.{name}.similarity"
+                f"mapping.properties.{name}.{similarity_key}"
                 if similarity_value is not None
-                else "ES-DENSE-VECTOR-001:version-unverified-default"
+                else f"{semantic_rule}:version-unverified-default"
             ),
-            rule="ES-DENSE-VECTOR-001",
+            rule=semantic_rule,
         )
+        if source_type == "knn_vector":
+            knn_enabled = _opensearch_knn_enabled(settings or {})
+            effective["vector_retrieval"] = Claim(
+                value=knn_enabled,
+                evidence_level=(
+                    EvidenceLevel.DECLARED
+                    if knn_enabled is not None
+                    else EvidenceLevel.INFERRED
+                ),
+                source=(
+                    "settings.index.knn"
+                    if knn_enabled is not None
+                    else "settings.index.knn:not_supplied"
+                ),
+                rule=semantic_rule,
+            )
 
     return FieldAssessment(
         source_name=name,
@@ -280,11 +361,7 @@ def assess_field(
         support=Support(detect=True, generate=safe and logical_type is not None),
         returned_in_documents=bool(values),
         risks=list(dict.fromkeys(risks)),
-        generation_note=(
-            "Linguistic equivalence is not claimed."
-            if custom_analyzers or builtin_analyzers
-            else None
-        ),
+        generation_note=generation_note,
         source_type_claim=Claim(
             value=source_type,
             evidence_level=(
@@ -327,6 +404,17 @@ def resolve_query_evidence(
         if field is None:
             decision = worst_decision(decision, Decision.REVIEW)
             reasons.append(f"Query references unmapped field {field_name}")
+            resolved_usage[field_name] = list(raw_usages)
+            continue
+        if field.generation_scope is GenerationScope.FLATTENED:
+            decision = worst_decision(decision, Decision.REVIEW)
+            reasons.append(f"Field {field_name} is represented by child fields")
+            resolved_usage[field_name] = list(raw_usages)
+            continue
+        if field.logical_type is None and not field.support.generate:
+            decision = worst_decision(decision, Decision.REVIEW)
+            detail = field.reasons[0] if field.reasons else "source semantics require review"
+            reasons.append(f"Field {field_name} is not generated: {detail}")
             resolved_usage[field_name] = list(raw_usages)
             continue
         usages: set[str] = set()
@@ -400,7 +488,7 @@ def _resolve_usage(raw: str, logical_type: LogicalType | None) -> tuple[str | No
     if raw == "vector_retrieval":
         if logical_type is LogicalType.VECTOR:
             return "vector_retrieval", None
-        return None, "ANN retrieval requires a dense_vector field"
+        return None, "ANN retrieval requires a vector field"
     return None, f"query usage {raw} is not recognized"
 
 
@@ -484,13 +572,23 @@ def assess_mapping_options(mapping: dict[str, Any]) -> list[str]:
     )
 
 
+def _opensearch_knn_enabled(settings: dict[str, Any]) -> bool | None:
+    index = index_settings(settings)
+    value = index.get("knn", index.get("index.knn"))
+    if value is True or value == "true":
+        return True
+    if value is False or value == "false":
+        return False
+    return None
+
+
 def _cardinality(
     source_type: str,
     values: list[Any],
     documents_supplied: bool,
 ) -> CardinalityObservation:
     def is_array(value: Any) -> bool:
-        return isinstance(value, list) and source_type != "dense_vector"
+        return isinstance(value, list) and source_type not in {"dense_vector", "knn_vector"}
 
     scalar = sum(value is not None and not is_array(value) for value in values)
     arrays = sum(value is not None and is_array(value) for value in values)

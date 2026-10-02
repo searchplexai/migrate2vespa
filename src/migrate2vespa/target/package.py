@@ -336,7 +336,9 @@ def transform_document(
         value = value_at_path(document.fields, plan.source_path)
         if value is None:
             continue
-        output[plan.name] = apply_transforms(value, plan.transforms)
+        transformed = apply_transforms(value, plan.transforms)
+        if transformed is not None:
+            output[plan.name] = transformed
     return {
         "put": f"id:{manifest.project_name}:{manifest.project_name}::{document.source_id}",
         "fields": output,

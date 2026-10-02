@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.1 — 2026-10-02
+
+- Hold back fields whose analyzer behavior the generated package cannot reproduce.
+- Preserve `copy_to` source fields while omitting unpopulated destinations.
+- Correct Boolean doc-values evidence and query diagnostics for held-back fields.
+- Generate observed scalar-object child fields without reporting their containers as omissions.
+- Handle `ignore_above` on keyword multi-fields with mixed scalar/array samples.
+- Record `multi_match` field usage and support the narrow OpenSearch `knn_vector` form without a `method` definition.
+- Allow reviewed manifests to omit fields or safely widen numeric target types.
+- Preserve `index: false` when representative queries request text search; record the conflict on the field.
+- Record the linguistic caveat for default text fields and accept explicit `element_type: float` vectors.
+- Keep fields unsearchable when both `index` and `doc_values` are disabled, even when representative queries reference them.
+- Clarify that Elasticsearch vector `index_options` are not translated.
+- 0.1.0 cannot read 0.1.1 manifests that contain flattened-object fields;
+  use 0.1.1 to read those manifests.
+
 ## 0.1.0 — 2026-08-26
 
 Offline Elasticsearch/OpenSearch → Vespa schema planning.

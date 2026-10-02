@@ -30,3 +30,11 @@ Decisions: `DIRECT`, `ADAPT`, `REVIEW`, `REDESIGN`. Rule IDs live in
 
 `generation.omitted` lists what was left out of the package. `SUBTREE` omissions
 cover a container and everything under it.
+Scalar object containers represented by their child fields remain in artifact
+coverage but are not counted as generated fields or omissions.
+
+`generate <manifest.yaml>` can render a reviewed plan. Edits are checked
+against the recorded requirements; for example, widening an integer target to
+`long` is allowed, but an incompatible type change is rejected. Set a field's
+`support.generate` to `false` to leave it out of the package while keeping it
+in the manifest.

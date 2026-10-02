@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .manifest import Decision, MigrationManifest, OperationalStatus
+from .manifest import Decision, GenerationScope, MigrationManifest, OperationalStatus
 
 CONSOLE_FIELD_STATUS_LABELS = {
     OperationalStatus.READY: "READY",
@@ -115,6 +115,8 @@ def _console_findings(
         for field_name in configuration.get("fields", [])
     }
     for field in manifest.fields:
+        if field.generation_scope is GenerationScope.FLATTENED:
+            continue
         status = _field_status(field)
         if status is OperationalStatus.READY_WITH_CAVEATS:
             if field.source_name in analysis_fields:
@@ -200,7 +202,11 @@ def render_console_summary(
     ]
 
     field_counts = {
-        status: sum(_field_status(field) is status for field in manifest.fields)
+        status: sum(
+            field.generation_scope is not GenerationScope.FLATTENED
+            and _field_status(field) is status
+            for field in manifest.fields
+        )
         for status in OperationalStatus
     }
     for status in (

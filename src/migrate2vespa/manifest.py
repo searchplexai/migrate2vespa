@@ -24,6 +24,7 @@ class GenerationScope(str, Enum):
     FIELD = "FIELD"
     SUBTREE = "SUBTREE"
     PACKAGE = "PACKAGE"
+    FLATTENED = "FLATTENED"
 
 
 class EvidenceLevel(str, Enum):

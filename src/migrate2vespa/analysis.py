@@ -52,7 +52,7 @@ def analyze_inspection(
             source.registry,
             field.rules,
         )
-        if field.support.generate:
+        if field.support.generate and field.generation_scope is not GenerationScope.FLATTENED:
             _apply_planning_issues(field, apply_plan(field))
         _refresh_field_confidence(field)
 
@@ -146,12 +146,16 @@ def analyze_inspection(
 
 def _refresh_field_confidence(field: FieldAssessment) -> None:
     state = field.cardinality_observation.state
+    if field.generation_scope is GenerationScope.FLATTENED:
+        target_confidence = "MEDIUM"
+    elif field.decision is Decision.DIRECT and field.target_plan is not None:
+        target_confidence = "HIGH"
+    elif field.decision is Decision.ADAPT and field.target_plan is not None:
+        target_confidence = "MEDIUM"
+    else:
+        target_confidence = "LOW"
     field.confidence.update({
-        "target_representation": (
-            "HIGH" if field.decision is Decision.DIRECT and field.target_plan is not None
-            else "MEDIUM" if field.decision is Decision.ADAPT and field.target_plan is not None
-            else "LOW"
-        ),
+        "target_representation": target_confidence,
         "cardinality": (
             "HIGH" if state in {CardinalityState.MULTI_OBSERVED, CardinalityState.MIXED_OBSERVED}
             else "MEDIUM" if state is CardinalityState.SCALAR_ONLY_OBSERVED
@@ -159,7 +163,9 @@ def _refresh_field_confidence(field: FieldAssessment) -> None:
         ),
         "behavioral_equivalence": (
             "UNKNOWN" if not field.usage_sources
-            else "LOW" if field.decision in {Decision.REVIEW, Decision.REDESIGN} or "linguistic_parity_unknown" in field.risks
+            else "LOW" if field.decision in {Decision.REVIEW, Decision.REDESIGN}
+            or "linguistic_parity_unknown" in field.risks
+            or "default_text_linguistics_differ" in field.risks
             else "MEDIUM" if field.decision is Decision.ADAPT or RequiredCapability.TEXT_MATCH in field.required_capabilities
             else "HIGH"
         ),

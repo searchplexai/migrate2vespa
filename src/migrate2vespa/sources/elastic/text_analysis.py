@@ -4,7 +4,8 @@ from typing import Any
 
 from ...manifest import FieldAssessment, OperationalStatus
 
-# Built-in analyzers map to Vespa Lucene Linguistics; custom ones need review.
+# These source analyzers have a potential Vespa Lucene Linguistics path, but the
+# generated package does not configure that component.
 BUILTIN_LUCENE_ANALYZERS = {
     "simple", "whitespace", "stop", "keyword", "pattern", "fingerprint",
     "arabic", "armenian", "basque", "bengali", "brazilian", "bulgarian", "catalan",
@@ -15,15 +16,22 @@ BUILTIN_LUCENE_ANALYZERS = {
 }
 
 
-def analysis_config(settings: Any) -> dict[str, Any]:
-    """Return the effective index.analysis object from common settings exports."""
+def index_settings(settings: Any) -> dict[str, Any]:
+    """Unwrap the index settings from common Elasticsearch/OpenSearch exports."""
     current = settings.get("settings", settings) if isinstance(settings, dict) else {}
+    if not isinstance(current, dict):
+        return {}
     if len(current) == 1 and isinstance(next(iter(current.values()), None), dict):
         candidate = next(iter(current.values()))
         if "settings" in candidate:
             current = candidate["settings"]
-    index_settings = current.get("index", current) if isinstance(current, dict) else {}
-    analysis = index_settings.get("analysis", {}) if isinstance(index_settings, dict) else {}
+    index = current.get("index", current) if isinstance(current, dict) else {}
+    return index if isinstance(index, dict) else {}
+
+
+def analysis_config(settings: Any) -> dict[str, Any]:
+    """Return the effective index.analysis object from common settings exports."""
+    analysis = index_settings(settings).get("analysis", {})
     return analysis if isinstance(analysis, dict) else {}
 
 
@@ -35,12 +43,18 @@ def _analyzer_assessment(
     explicitly_configured = isinstance(definitions, dict) and name in definitions
 
     if name == "standard" and not explicitly_configured:
-        return True, OperationalStatus.READY, None, "VESPA_DEFAULT", "ES-FIELD-TEXT-001"
-    if name in BUILTIN_LUCENE_ANALYZERS and not explicitly_configured:
         return (
             True,
             OperationalStatus.READY_WITH_CAVEATS,
-            "Use Vespa Lucene Linguistics.",
+            "Vespa default text analysis differs from Elasticsearch standard analysis.",
+            "VESPA_DEFAULT",
+            "ES-FIELD-TEXT-001",
+        )
+    if name in BUILTIN_LUCENE_ANALYZERS and not explicitly_configured:
+        return (
+            True,
+            OperationalStatus.BLOCKED_DECISION,
+            "Configure and review Vespa Lucene Linguistics.",
             "LUCENE_LINGUISTICS",
             "ES-LUCENE-ANALYZER-001",
         )
@@ -99,7 +113,10 @@ def assess_text_analysis(fields: list[FieldAssessment], settings: Any) -> dict[s
     analysis = analysis_config(settings)
     references: dict[tuple[str, str], set[str]] = {}
     for field in fields:
-        if field.source_type in {"text", "match_only_text"}:
+        indexed = field.effective_semantics.get("indexed")
+        if field.source_type in {"text", "match_only_text"} and (
+            indexed is None or indexed.value is not False
+        ):
             index_analyzer = str(field.source_properties.get("analyzer", "standard"))
             references.setdefault(("analyzer", index_analyzer), set()).add(field.source_name)
             search_analyzer = field.source_properties.get("search_analyzer")

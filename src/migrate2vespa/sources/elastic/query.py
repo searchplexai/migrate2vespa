@@ -13,6 +13,7 @@ KNOWN_QUERY_OPERATORS = {
     "match",
     "match_all",
     "match_phrase",
+    "multi_match",
     "range",
     "script_score",
     "term",
@@ -171,6 +172,12 @@ def collect_query_evidence(clause: Any) -> tuple[list[str], dict[str, set[str]]]
                 for field_name in child:
                     add(str(field_name), field_operators[operator])
                 continue
+            if operator == "multi_match" and isinstance(child, dict):
+                fields = child.get("fields")
+                for field_name in fields if isinstance(fields, list) else []:
+                    if isinstance(field_name, str) and "*" not in field_name:
+                        add(field_name.split("^", 1)[0], "match_query")
+                continue
             if operator == "knn":
                 _record_knn_fields(child, add)
                 continue
@@ -193,6 +200,10 @@ def _record_knn_fields(child: Any, add) -> None:
     for item in entries:
         if isinstance(item, dict) and isinstance(item.get("field"), str):
             add(item["field"], "vector_retrieval")
+        elif isinstance(item, dict) and len(item) == 1:
+            field_name, definition = next(iter(item.items()))
+            if isinstance(definition, dict) and "vector" in definition:
+                add(str(field_name), "vector_retrieval")
 
 
 def _unknown_query_operators(clause: Any) -> list[str]:
@@ -253,6 +264,19 @@ def _leaf_options(clause: Any) -> list[str]:
         if not isinstance(value, dict):
             return
         for operator, child in value.items():
+            if operator == "multi_match" and isinstance(child, dict):
+                fields = child.get("fields")
+                if not isinstance(fields, list) or not fields:
+                    findings.append("multi_match has no explicit field list")
+                else:
+                    if any(not isinstance(field, str) or "*" in field for field in fields):
+                        findings.append("multi_match wildcard or invalid fields require review")
+                    if any(isinstance(field, str) and "^" in field for field in fields):
+                        findings.append("multi_match field boosts require review")
+                options = sorted(set(child) - {"query", "fields"})
+                if options:
+                    findings.append("multi_match options require review: " + ", ".join(options))
+                continue
             if operator in {"match", "match_phrase"} and isinstance(child, dict):
                 for field_name, definition in child.items():
                     if isinstance(definition, dict):
@@ -284,6 +308,13 @@ def _leaf_options(clause: Any) -> list[str]:
                     if not isinstance(item, dict):
                         findings.append(f"{label} has an unrecognized definition")
                         continue
+                    if "field" not in item and len(item) == 1:
+                        _, definition = next(iter(item.items()))
+                        if isinstance(definition, dict) and "vector" in definition:
+                            options = sorted(set(definition) - {"vector", "k"})
+                            if options:
+                                findings.append(f"{label} OpenSearch options require review: {', '.join(options)}")
+                            continue
                     options = sorted(
                         set(item) - {"field", "query_vector", "k", "num_candidates"}
                     )

@@ -27,8 +27,8 @@ def test_registry_entries_are_complete_and_consistent():
 @pytest.mark.parametrize(
     ("properties", "settings", "expected_rule", "expected_decision", "generates"),
     [
-        ({"type": "text", "analyzer": "custom_text"}, {}, "ES-CUSTOM-ANALYZER-001", Decision.DIRECT, True),
-        ({"type": "text", "analyzer": "english"}, {}, "ES-LUCENE-ANALYZER-001", Decision.ADAPT, True),
+        ({"type": "text", "analyzer": "custom_text"}, {}, "ES-CUSTOM-ANALYZER-001", Decision.REVIEW, False),
+        ({"type": "text", "analyzer": "english"}, {}, "ES-LUCENE-ANALYZER-001", Decision.REVIEW, False),
         ({"type": "text", "index": False}, {}, "ES-FIELD-INDEX-DISABLED-001", Decision.ADAPT, True),
         ({"type": "keyword", "doc_values": False}, {}, "ES-FIELD-DOCVALUES-DISABLED-001", Decision.ADAPT, True),
         ({"type": "keyword", "index": False, "doc_values": False}, {}, "ES-FIELD-LOOKUP-DISABLED-001", Decision.ADAPT, True),
@@ -175,6 +175,72 @@ def test_float_vector_records_version_unverified_defaults():
     assert field.distance_metric == "angular"
     assert len(field.assumptions) == 2
     assert field.support.generate
+
+
+def test_boolean_doc_values_default_and_analyzer_generation_policy():
+    boolean = assess_field("active", {"type": "boolean"}, [], None, {})
+    assert boolean.effective_semantics["doc_values"].value is True
+    for analyzer in ("english", "custom_product"):
+        field = assess_field("title", {"type": "text", "analyzer": analyzer}, [], None, {})
+        assert field.decision is Decision.REVIEW
+        assert not field.support.generate
+
+
+def test_default_text_keeps_direct_field_plan_but_records_linguistic_caveat():
+    field = assess_field("title", {"type": "text"}, [], None, {})
+    assert field.decision is Decision.DIRECT
+    assert field.support.generate
+    assert "default_text_linguistics_differ" in field.risks
+    assert "linguistic equivalence is not claimed" in field.generation_note
+
+    custom_standard = assess_field(
+        "title", {"type": "text", "analyzer": "standard"}, [], None,
+        {"settings": {"index": {"analysis": {"analyzer": {
+            "standard": {"type": "custom", "tokenizer": "keyword"},
+        }}}}},
+    )
+    assert not custom_standard.support.generate
+
+
+def test_opensearch_vector_and_query_are_assessed_together():
+    settings = {"settings": {"index": {"knn": "true"}}}
+    field = assess_field(
+        "embedding",
+        {"type": "knn_vector", "dimension": 2, "space_type": "cosinesimil"},
+        [document({"embedding": [0.1, 0.2]})], None, settings,
+    )
+    query = assess_query(
+        "nearest", "queries/nearest.json",
+        {"query": {"knn": {"embedding": {"vector": [0.1, 0.2], "k": 3}}}},
+    )
+    resolve_query_evidence(query, [field])
+    assert field.distance_metric == "angular"
+    assert field.support.generate
+    assert query.field_usage["embedding"] == ["vector_retrieval"]
+    assert "ES-USAGE-ANN-001" in query.rules
+    unverified = assess_field("embedding", {"type": "knn_vector", "dimension": 2}, [], None, {})
+    assert not unverified.support.generate
+    assert unverified.effective_semantics["vector_retrieval"].value is None
+    method = assess_field(
+        "embedding",
+        {"type": "knn_vector", "dimension": 2, "method": {"name": "hnsw"}},
+        [], None, settings,
+    )
+    assert not method.support.generate
+    assert "ES-UNSUPPORTED-001" in method.rules
+
+
+def test_multi_match_preserves_field_evidence_and_flags_meaningful_options():
+    fields = [assess_field(name, {"type": "text"}, [], None, {}) for name in ("title", "description")]
+    query = assess_query(
+        "search", "queries/search.json",
+        {"query": {"multi_match": {"query": "shoe", "fields": ["title^2", "description"], "type": "best_fields"}}},
+    )
+    resolve_query_evidence(query, fields)
+    assert query.decision is Decision.REVIEW
+    assert query.observed_fields == ["description", "title"]
+    assert query.field_usage["title"] == ["text_search"]
+    assert "multi_match field boosts require review" in query.reasons[-1]
 
 
 @pytest.mark.parametrize(

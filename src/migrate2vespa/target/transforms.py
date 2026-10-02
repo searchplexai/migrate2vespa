@@ -16,6 +16,7 @@ _PARAMETERS: dict[str, set[str]] = {
     "dense_vector_to_tensor": set(),
     "ensure_array": set(),
     "lowercase_string": set(),
+    "omit_above_length": {"limit"},
 }
 
 _EPOCH_FORMATS = frozenset({"epoch_millis", "epoch_second"})
@@ -34,6 +35,10 @@ def validate_transform(spec: TransformSpec) -> None:
         spec.parameters.get("declared_format"), str
     ):
         raise TransformError("date_to_epoch_seconds requires a declared_format string")
+    if spec.operation == "omit_above_length":
+        limit = spec.parameters.get("limit")
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise TransformError("omit_above_length requires a positive integer limit")
 
 
 def apply_transforms(value: Any, transforms: tuple[TransformSpec, ...]) -> Any:
@@ -41,6 +46,8 @@ def apply_transforms(value: Any, transforms: tuple[TransformSpec, ...]) -> Any:
     for spec in transforms:
         validate_transform(spec)
         current = _apply_transform(current, spec)
+        if current is None:
+            return None
     return current
 
 
@@ -58,6 +65,11 @@ def _apply_transform(value: Any, spec: TransformSpec) -> Any:
         return _map_values(value, lambda item: _date_to_epoch_seconds(item, declared_format))
     if spec.operation == "lowercase_string":
         return _map_values(value, lambda item: item.lower() if isinstance(item, str) else item)
+    if spec.operation == "omit_above_length":
+        limit = spec.parameters["limit"]
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, str) and len(item) <= limit]
+        return value if isinstance(value, str) and len(value) <= limit else None
     raise TransformError(f"Unknown target transform: {spec.operation}")
 
 

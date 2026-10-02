@@ -24,6 +24,9 @@ def build_generation_plan(
     package_blockers: list[str] = []
 
     for field in fields:
+        if field.generation_scope is GenerationScope.FLATTENED:
+            # This container is represented by its child fields, not omitted.
+            continue
         if field.support.generate and field.target_plan is not None:
             continue
         if field.generation_scope is GenerationScope.SUBTREE:
@@ -47,6 +50,11 @@ def build_generation_plan(
 
     # Close dependencies expressed by resolved target plans. A target field whose
     # source path belongs to an omitted unit cannot remain in the package or feed.
+    omitted_scopes = {
+        path: item.scope
+        for item in omitted
+        for path in (item.covers or (item.source_path,))
+    }
     changed = True
     while changed:
         changed = False
@@ -54,8 +62,16 @@ def build_generation_plan(
             if field.source_name in covered or field.target_plan is None:
                 continue
             dependency = field.target_plan.source_path
-            if any(dependency == path or dependency.startswith(path + ".") for path in covered):
+            if any(
+                dependency == path
+                or (
+                    scope is GenerationScope.SUBTREE
+                    and dependency.startswith(path + ".")
+                )
+                for path, scope in omitted_scopes.items()
+            ):
                 covered.add(field.source_name)
+                omitted_scopes[field.source_name] = GenerationScope.FIELD
                 omitted.append(
                     GenerationOmission(
                         source_path=field.source_name,
@@ -99,7 +115,9 @@ def build_generation_plan(
         status=status,
         planned_outcome=planned_outcome,
         generated_field_count=len(retained),
-        supplied_field_count=len(fields),
+        supplied_field_count=sum(
+            field.generation_scope is not GenerationScope.FLATTENED for field in fields
+        ),
         omitted=omitted,
         package_blockers=package_blockers,
     )

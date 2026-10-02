@@ -16,7 +16,8 @@ def test_primary_command_generates_next_to_project(tmp_path, capsys):
 
     assert result == 0
     assert "Analysis: COMPLETE" in output
-    assert "Vespa app generated successfully." in output
+    assert "Vespa default text analysis differs from Elasticsearch standard analysis" in output
+    assert "Vespa app generation: PARTIAL" in output
     assert "Vespa app: out/vespa-app" in output
     assert "Next: vespa deploy --wait 600 out/vespa-app" in output
     assert (project / "out" / "migration-manifest.yaml").is_file()

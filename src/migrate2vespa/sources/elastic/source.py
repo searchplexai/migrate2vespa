@@ -13,8 +13,10 @@ from typing import Any
 from ...manifest import (
     Decision,
     FieldAssessment,
+    GenerationScope,
     LogicalType,
     QueryAssessment,
+    Support,
     value_at_path,
     worst_decision,
 )
@@ -55,16 +57,7 @@ class ElasticSource:
         return artifacts.decode_document(raw, sequence, source_path)
 
     def assess(self, inspection: SourceInspection) -> SourceAssessment:
-        fields = [
-            assess_field(
-                name,
-                properties,
-                inspection.documents,
-                context,
-                inspection.settings,
-            )
-            for name, properties, context in inspection.field_declarations
-        ]
+        fields = _assess_fields(inspection)
         annotate_analysis_evidence(fields, inspection.settings)
 
         queries = _assess_queries(inspection, fields)
@@ -88,6 +81,89 @@ class ElasticSource:
                 + _document_consistency_issues(fields, inspection.documents)
             ),
         )
+
+
+def _assess_fields(inspection: SourceInspection) -> list[FieldAssessment]:
+    plain_objects = {
+        name
+        for name, properties, context in inspection.field_declarations
+        if properties.get("type", "object") == "object"
+        and isinstance(properties.get("properties"), dict)
+        and set(properties) <= {"type", "properties"}
+        and inspection.documents
+        and any(
+            isinstance(value_at_path(doc.fields, name), dict)
+            for doc in inspection.documents
+        )
+        and all(
+            value_at_path(doc.fields, name) is None
+            or isinstance(value_at_path(doc.fields, name), dict)
+            for doc in inspection.documents
+        )
+        and context != "nested"
+    }
+    fields: list[FieldAssessment] = []
+    for name, properties, context in inspection.field_declarations:
+        # Flatten only objects observed as scalar. Arrays of objects can carry
+        # same-element semantics and remain an omitted subtree.
+        parent = name.rsplit(".", 1)[0] if "." in name else None
+        effective_context = (
+            None if context == "object" and parent in plain_objects else context
+        )
+        field = assess_field(
+            name, properties, inspection.documents, effective_context, inspection.settings
+        )
+        if name in plain_objects:
+            field.generation_scope = GenerationScope.FLATTENED
+            field.decision = Decision.ADAPT
+            field.support = Support(detect=True, generate=True)
+            field.rules = ["ES-OBJECT-SCALAR-001"]
+            field.reasons = ["Scalar object is represented by its child fields"]
+            field.effective_semantics = {}
+            field.assumptions.append("unobserved_object_values_match_sample_shape")
+            field.risks.append("object_array_values_not_observed_in_samples")
+        elif context == "object" and parent in plain_objects:
+            field.assumptions.append("parent_object_remains_scalar")
+        fields.append(field)
+
+    by_name = {field.source_name: field for field in fields}
+    for name, properties, _ in inspection.field_declarations:
+        source = by_name[name]
+        destinations = properties.get("copy_to", [])
+        if isinstance(destinations, str):
+            destinations = [destinations]
+        if not isinstance(destinations, list) or any(
+            not isinstance(destination, str) or not destination
+            for destination in destinations
+        ):
+            source.decision = worst_decision(source.decision, Decision.REVIEW)
+            source.support = Support(detect=True, generate=False)
+            source.logical_type = None
+            source.rules = list(dict.fromkeys(source.rules + ["ES-UNSUPPORTED-001"]))
+            source.reasons.insert(0, "copy_to must name one or more target fields")
+            continue
+        if destinations:
+            source.decision = worst_decision(source.decision, Decision.ADAPT)
+            source.rules = list(dict.fromkeys(source.rules + ["ES-COPY-TO-001"]))
+            source.risks.append("copy_to_destination_not_generated")
+            source.reasons.append("copy_to destination is not generated")
+        for destination in destinations:
+            target = by_name.get(destination)
+            if target is None:
+                source.decision = worst_decision(source.decision, Decision.REVIEW)
+                source.support = Support(detect=True, generate=False)
+                source.logical_type = None
+                source.rules = list(dict.fromkeys(source.rules + ["ES-UNSUPPORTED-001"]))
+                source.reasons.insert(0, f"copy_to destination {destination} is not mapped")
+                continue
+            target.decision = worst_decision(target.decision, Decision.REVIEW)
+            target.support = Support(detect=True, generate=False)
+            target.logical_type = None
+            target.rules = list(dict.fromkeys(target.rules + ["ES-UNSUPPORTED-001"]))
+            target.reasons.insert(0,
+                f"Receives copy_to values from {name}; the feed does not reproduce copy_to"
+            )
+    return fields
 
 
 def _assess_queries(
@@ -139,6 +215,38 @@ def _attach_evidence_rules(fields: list[FieldAssessment]) -> None:
         if cardinality_rule:
             field.rules.append(cardinality_rule)
         for usage in field.observed_usage:
+            indexed = field.effective_semantics.get("indexed")
+            doc_values = field.effective_semantics.get("doc_values")
+            if (
+                indexed is not None
+                and indexed.value is False
+                and doc_values is not None
+                and doc_values.value is False
+                and usage in {"single_token_match", "exact_filter", "range_filter", "sort", "aggregate"}
+            ):
+                field.decision = worst_decision(field.decision, Decision.REVIEW)
+                if "query_conflicts_with_lookup_disabled" not in field.risks:
+                    field.risks.append("query_conflicts_with_lookup_disabled")
+                    field.reasons.insert(
+                        0,
+                        "Representative query requires lookup, but the mapping disables both index and doc_values; "
+                        "the generated field remains unsearchable",
+                    )
+                continue
+            if (
+                indexed is not None
+                and indexed.value is False
+                and usage in {"text_search", "analyzed_term", "vector_retrieval"}
+            ):
+                field.decision = worst_decision(field.decision, Decision.REVIEW)
+                if "query_conflicts_with_index_disabled" not in field.risks:
+                    field.risks.append("query_conflicts_with_index_disabled")
+                    field.reasons.insert(
+                        0,
+                        "Representative query requires indexing, but the mapping declares index:false; "
+                        "the generated field remains unindexed",
+                    )
+                continue
             usage_rule = USAGE_RULES.get(usage)
             if usage_rule:
                 field.rules.append(usage_rule)

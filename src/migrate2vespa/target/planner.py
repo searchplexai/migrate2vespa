@@ -63,7 +63,7 @@ def validate_field_plan(
     expected_type = _target_type(field)
     if expected_type is None:
         issues.append("Normalized field facts do not establish a target type")
-    elif plan.type != expected_type:
+    elif plan.type != expected_type and plan.type not in _safe_widenings(expected_type):
         issues.append(
             f"Target type {plan.type} conflicts with normalized type {expected_type}"
         )
@@ -80,6 +80,18 @@ def validate_field_plan(
                 "Target ANN distance metric conflicts with normalized vector semantics"
             )
     return tuple(dict.fromkeys(issues))
+
+
+def _safe_widenings(vespa_type: str) -> set[str]:
+    """Permit reviewed target plans that widen a supported numeric field."""
+    widening = {"int": "long", "float": "double"}
+    if vespa_type in widening:
+        return {widening[vespa_type]}
+    if vespa_type.startswith("array<") and vespa_type.endswith(">"):
+        inner = vespa_type[6:-1]
+        if inner in widening:
+            return {f"array<{widening[inner]}>"}
+    return set()
 
 
 def _build_plan(field: FieldAssessment) -> TargetFieldPlan | None:

@@ -80,17 +80,29 @@ _RULES = (
         True, "quickstart/title.raw",
     ),
     _rule(
+        "ES-OBJECT-SCALAR-001", "Scalar object", "field",
+        "an object whose supplied values are scalar objects", Decision.ADAPT,
+        "The object is represented by its flattened child fields.",
+        True, "synthetic/scalar-object",
+    ),
+    _rule(
+        "ES-COPY-TO-001", "Copy-to source", "mapping_parameter",
+        "a source field with copy_to", Decision.ADAPT,
+        "The source field remains usable; its copy_to destination is held back.",
+        True, "synthetic/copy-to",
+    ),
+    _rule(
         "ES-CUSTOM-ANALYZER-001", "Custom analyzer", "analysis",
-        "a text field referencing custom index or search analysis", Decision.DIRECT,
-        "The indexed-string target is clear while linguistic equivalence remains unresolved.",
-        True, "quickstart/description", surface="TEXT_ANALYSIS",
+        "a text field referencing custom index or search analysis", Decision.REVIEW,
+        "The field needs a Vespa linguistics design before generation.",
+        False, "quickstart/description", surface="TEXT_ANALYSIS",
         limitations=("Human review is required before claiming equivalent linguistic behavior.",),
     ),
     _rule(
         "ES-LUCENE-ANALYZER-001", "Built-in Lucene analyzer", "analysis",
-        "a supported built-in Lucene language analyzer", Decision.ADAPT,
-        "The field can use Vespa Lucene Linguistics, with configuration review.",
-        True, "synthetic/lucene-analyzer", surface="TEXT_ANALYSIS",
+        "a supported built-in Lucene language analyzer", Decision.REVIEW,
+        "The generated package does not configure Vespa Lucene Linguistics.",
+        False, "synthetic/lucene-analyzer", surface="TEXT_ANALYSIS",
         limitations=("Analyzer behavior is not claimed equivalent until validated.",),
     ),
     _rule(
@@ -141,6 +153,13 @@ _RULES = (
         "A dimensioned float vector maps to a Vespa dense tensor attribute.",
         True, "quickstart/embedding", (RequiredCapability.ANN,),
         ("Omitted source defaults remain explicit version-unverified assumptions.",),
+    ),
+    _rule(
+        "OS-KNN-VECTOR-001", "OpenSearch kNN vector field", "field",
+        "dimensioned float knn_vector fields with index.knn:true and a supported space type", Decision.ADAPT,
+        "A float kNN vector maps to a Vespa dense tensor attribute.",
+        True, "synthetic/opensearch-knn-vector", (RequiredCapability.ANN,),
+        ("Missing index.knn settings, method parameters, and non-float vectors require review.",),
     ),
     _rule(
         "ES-CARDINALITY-MULTI-001", "Observed array", "value_shape",
@@ -237,8 +256,8 @@ def effective_field_semantics(
     text = source_type == "text"
     numeric = source_type in {"integer", "long", "float", "double"}
     date = source_type == "date"
-    vector = source_type == "dense_vector"
-    doc_values_default = keyword or numeric or date
+    vector = source_type in {"dense_vector", "knn_vector"}
+    doc_values_default = keyword or numeric or date or source_type == "boolean"
     indexed = properties.get("index", True)
     doc_values = properties.get("doc_values", doc_values_default)
     return {

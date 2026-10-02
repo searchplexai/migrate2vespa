@@ -80,11 +80,21 @@ See [docs/overview.md](docs/overview.md) for more detail.
 
 | Surface | Behavior |
 |---|---|
-| Fields | `text`, `keyword`, `boolean`, `integer`, `long`, `float`, `double`, recognized `date`, dimensioned float `dense_vector` |
-| Adaptations | Multi-fields, observed arrays, lowercase normalizers, dates → epoch seconds, vectors → tensors |
-| Query evidence | `match`, `match_phrase`, `term`, `terms`, `range`, sort, basic aggregations, `knn`; custom scoring → redesign |
+| Fields | `text`, `keyword`, `boolean`, `integer`, `long`, `float`, `double`, recognized `date`, float `dense_vector` without explicit `index_options`, and OpenSearch `knn_vector` without a `method` definition |
+| Adaptations | Multi-fields, observed arrays and scalar objects, lowercase normalizers, supported dates and vectors; `ignore_above` on keyword multi-fields |
+| Query evidence | `match`, `match_phrase`, `multi_match`, `term`, `terms`, `range`, sort, basic aggregations, `knn`; custom scoring → redesign |
 
 Unrecognized constructs are recorded, not guessed.
+Default text fields use Vespa's linguistics, which can differ from Elasticsearch's
+standard analyzer; the manifest records this caveat.
+Custom and non-default built-in analyzers need a Vespa linguistics decision;
+the tool does not silently generate an equivalent analyzer. For OpenSearch
+`knn_vector`, include settings with `index.knn: true` to establish ANN indexing.
+OpenSearch `method` definitions require review.
+Elasticsearch vector `index_options` also require review; the tool does not
+translate the declared vector indexing configuration.
+With `copy_to`, source fields remain available but the copied destination is
+left out until its behavior is designed.
 
 ## CLI
 
